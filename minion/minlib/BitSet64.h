@@ -135,9 +135,34 @@ namespace CTRL {
             BIT_SET(words_[p.x], p.y);
         }
 
+        void Set() noexcept {
+            for (auto &w:words_) {
+                w = kAllOne;
+            }
+            words_.back() = last_mask_;
+        }
+
+        void Set(BitSet64 &s) noexcept {
+            for (int i = 0, len = long_size_; i < long_size_; ++i) {
+                words_[i] = s.words_[i];
+            }
+        }
+
+        void Reset() noexcept {
+            for (auto &w:words_) {
+                w = 0L;
+            }
+        }
+
         void Reset(const int i) noexcept {
             const Index2D p = GetIndex2D(i);
             BIT_RESET(words_[p.x], p.y);
+        }
+
+        void Reset(BitSet64 &s) noexcept {
+            for (int i = 0, len = long_size_; i < long_size_; ++i) {
+                words_[i] = ~s.words_[i];
+            }
         }
 
         bool Empty() noexcept {
@@ -286,21 +311,42 @@ namespace CTRL {
             return s;
         }
 
-        friend inline void BitAnd(BitSet64 &res, const BitSet64 &a, const BitSet64 &b) noexcept {
+        static inline void BitAnd(BitSet64 &res, const BitSet64 &a, const BitSet64 &b) noexcept {
             for (int i = 0; i < a.long_size_; ++i) {
                 res.words_[i] = a.words_[i] & b.words_[i];
             }
         }
 
-        friend inline void BitOr(BitSet64 &res, const BitSet64 &a, const BitSet64 &b) noexcept {
+        static inline void BitOr(BitSet64 &res, const BitSet64 &a, const BitSet64 &b) noexcept {
             for (int i = 0; i < a.long_size_; ++i) {
                 res.words_[i] = a.words_[i] | b.words_[i];
             }
         }
 
-        friend inline void BitXor(BitSet64 &res, const BitSet64 &a, const BitSet64 &b) noexcept {
+        static inline void BitXor(BitSet64 &res, const BitSet64 &a, const BitSet64 &b) noexcept {
             for (int i = 0; i < a.long_size_; ++i) {
                 res.words_[i] = a.words_[i] ^ b.words_[i];
+            }
+        }
+
+        static inline void
+        BitAnd(BitSet64 &res, const BitSet64 &a, const BitSet64 &b, const BitSet64 &c, const BitSet64 &d) noexcept {
+            for (int i = 0; i < a.long_size_; ++i) {
+                res.words_[i] = a.words_[i] & b.words_[i] & c.words_[i] & d.words_[i];
+            }
+        }
+
+        static inline void
+        BitOr(BitSet64 &res, const BitSet64 &a, const BitSet64 &b, const BitSet64 &c, const BitSet64 &d) noexcept {
+            for (int i = 0; i < a.long_size_; ++i) {
+                res.words_[i] = a.words_[i] | b.words_[i] | c.words_[i] | d.words_[i];
+            }
+        }
+
+        static inline void
+        BitXor(BitSet64 &res, const BitSet64 &a, const BitSet64 &b, const BitSet64 &c, const BitSet64 &d) noexcept {
+            for (int i = 0; i < a.long_size_; ++i) {
+                res.words_[i] = a.words_[i] ^ b.words_[i] ^ c.words_[i] ^ d.words_[i];
             }
         }
 

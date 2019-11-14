@@ -231,7 +231,7 @@ struct MDDNode {
     MDDNode* parent;
     vector<std::pair<DomainInt, MDDNode*> > links;  // pairs val,next
     SysInt id;   // Integer that uniquely defines this node.
-    char type;  //   -1 is tt, 0 is normal, -2 is ff.
+    char type;  //   -1 is search_edge, 0 is normal, -2 is ff.
 };
 
 template<typename VarArray, bool isNegative=false>
@@ -307,7 +307,7 @@ struct MDDC : public AbstractConstraint
             vector<DomainInt> tup(tupdata+(tuplelen*nodeid), tupdata+(tuplelen*(nodeid+1) ));   // inefficient.
 
             if(nodeid<tlsize-1) {
-                // Not final tt node.
+                // Not final search_edge node.
                 for(int pair=0; pair<(SysInt)tup.size(); pair=pair+2) {
                     if(tup[pair]==-1 && tup[pair+1]==-1) break;
 
@@ -320,7 +320,7 @@ struct MDDC : public AbstractConstraint
 
             }
             else {
-                // Final tt node.
+                // Final search_edge node.
                 CHECK(tup[0]==-1 && tup[1]==-1, "Final MDD node must be all -1s, cannot link to any other nodes.");
                 mddnodes[nodeid].id=-1;
             }
@@ -356,7 +356,7 @@ struct MDDC : public AbstractConstraint
                     // New node needed.
                     MDDNode* newnode=new MDDNode(curnode, 0);
                     if(i==tuplelen-1) {
-                        newnode->type=-1;  // At the end of the tuple -- make a tt node.
+                        newnode->type=-1;  // At the end of the tuple -- make a search_edge node.
                     }
                     mddnodes.push_back(newnode);
 
@@ -370,10 +370,10 @@ struct MDDC : public AbstractConstraint
                     curnode=links[idx].second;
                 }
             }
-            D_ASSERT(curnode->type == -1);  // tt node.
+            D_ASSERT(curnode->type == -1);  // search_edge node.
         }
 
-        // Now mdd is a trie with lots of tt nodes as the leaves.
+        // Now mdd is a trie with lots of search_edge nodes as the leaves.
         // Start merging from the leaves upwards.
         // label the nodes with a unique integer.
         for(int i=0; i<(SysInt)mddnodes.size(); i++) {
@@ -394,7 +394,7 @@ struct MDDC : public AbstractConstraint
         DomainInt* tupdata=tuples->getPointer();
 
         // Make the top node.
-        top=new MDDNode(NULL, -1);   // Start with just a tt node.
+        top=new MDDNode(NULL, -1);   // Start with just a search_edge node.
         mddnodes.push_back(top);
 
         for(int tupid=0; tupid<tlsize; tupid++) {
@@ -415,7 +415,7 @@ struct MDDC : public AbstractConstraint
 
                     MDDNode * newnode;
 
-                    //D_ASSERT(curnode->type==-1);   // tt node
+                    //D_ASSERT(curnode->type==-1);   // search_edge node
 
                     curnode->type=0;  // make it an internal node.
 
@@ -430,7 +430,7 @@ struct MDDC : public AbstractConstraint
                             mklink(curnode, newnode, val);
                         }
                         else {
-                            // Make a tt node.
+                            // Make a search_edge node.
                             MDDNode * tempnode=new MDDNode(curnode, -1);
                             mddnodes.push_back(tempnode);
                             mklink(curnode, tempnode, val);
@@ -444,7 +444,7 @@ struct MDDC : public AbstractConstraint
                     // Follow the link.
                     curnode=links[idx].second;
                     if(i==tuplelen-1) {
-                        // This is the case where a tt leaf node already exists.
+                        // This is the case where a search_edge leaf node already exists.
                         D_ASSERT(curnode->type == -1);
                         // Change it to an ff node.
                         curnode->type = -2;
@@ -454,7 +454,7 @@ struct MDDC : public AbstractConstraint
             D_ASSERT(curnode->type == -2);  // ff node at end of tuple.
 
         }
-        // Now mdd is a trie with lots of tt nodes as the leaves.
+        // Now mdd is a trie with lots of search_edge nodes as the leaves.
         // Start merging from the leaves upwards.
         // label the nodes with a unique integer.
         for(int i=0; i<(SysInt)mddnodes.size(); i++) {
@@ -596,7 +596,7 @@ struct MDDC : public AbstractConstraint
         for(SysInt i=0; i<v_size; i++) {
 
             if(curnode->type==-1) {
-                // tt node.
+                // search_edge node.
                 return true;
             }
 
@@ -707,7 +707,7 @@ struct MDDC : public AbstractConstraint
     // DFS of the MDD.
     bool mddcrecurse(MDDNode* curnode, SysInt level) {
         if(curnode->type==-1) {
-            //  special value indicating this is node tt.
+            //  special value indicating this is node search_edge.
             if(level<delta) {
                 delta=level; // This variable and all >= are now fully supported.
             }
@@ -777,7 +777,7 @@ struct MDDC : public AbstractConstraint
     // It does NOT use delta.
     bool mddcrecurse_assignment(MDDNode* curnode, SysInt level, box<pair<SysInt,DomainInt> >& assignment) {
         if(curnode->type==-1) {
-            //  special value indicating this is node tt.
+            //  special value indicating this is node search_edge.
             return true;
         }
 

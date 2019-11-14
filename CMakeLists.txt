@@ -4,7 +4,7 @@ project(MinionProject)
 
 # This will be ignored by everything except mac
 set(MACOSX_DEPLOYMENT_TARGET 10.5)
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake-modules)
 include(CheckIncludeFileCXX)

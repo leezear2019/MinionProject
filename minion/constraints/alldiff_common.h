@@ -152,14 +152,15 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
     CTRL::BitSet64 removed_edge;
     CTRL::BitSet64 invalid_edge;
     CTRL::BitSet64 allowed_edges;
-    CTRL::BitSet64 tt;
+    CTRL::BitSet64 search_edge;
 
-    std::vector<CTRL::BitSet64> AA;
-    std::vector<CTRL::BitSet64> BB;
-    std::vector<CTRL::BitSet64> CC;
-    std::vector<CTRL::BitSet64> DD;
+    std::vector<int> var_matched_edge;
+    std::vector<int> val_matched_edge;
+    std::vector<CTRL::BitSet64> var_unmatched_edge;
+    std::vector<CTRL::BitSet64> val_unmatched_edge;
     vector<int> value;
     std::unordered_map<int, int> value_map;
+    std::vector<int> matching;
     int arity;
     int max_domain_size;
     int num_bit;
@@ -182,7 +183,7 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 
     CONSTRAINT_ARG_LIST1(var_array);
 
-    vector <SysInt> SCCs;    // Variable numbers
+    vector<SysInt> SCCs;    // Variable numbers
     ReversibleMonotonicSet SCCSplit;
     // If !SCCSplit.isMember(anIndex) then anIndex is the last index in an SCC.
 
@@ -190,7 +191,7 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 
     D_DATA(void *SCCSplit2);
 
-    vector <SysInt> varToSCCIndex;  // Mirror of the SCCs array.
+    vector<SysInt> varToSCCIndex;  // Mirror of the SCCs array.
 
     GacAlldiffConstraint(StateObj *_stateObj, const VarArray &_var_array) : FlowConstraint<VarArray, UseIncGraph>(
             _stateObj, _var_array),
@@ -284,7 +285,8 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
         // 生成map
         int ii = 0;
         for (auto iter = values.begin(), end = values.end(); iter != end; ++iter, ++ii) {
-            value_map[ii] = *iter;
+            value_map[*iter] = ii;
+//            std::cout << ii << "," << value_map[ii] << std::endl;
         }
 
         // 其它数据结构
@@ -299,16 +301,17 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
         need_check_edge.Resize(num_bit);
         removed_edge.Resize(num_bit);
         invalid_edge.Resize(num_bit);
-        tt.Resize(num_bit);
-
-        AA.resize(arity, CTRL::BitSet64(num_bit));
-        BB.resize(max_domain_size, CTRL::BitSet64(num_bit));
-        CC.resize(max_domain_size, CTRL::BitSet64(num_bit));
-        DD.resize(arity, CTRL::BitSet64(num_bit));
+        search_edge.Resize(num_bit);
 
         not_A.Resize(arity);
         not_gamma.Resize(max_domain_size);
         not_free_nodes.Resize(max_domain_size);
+
+        val_matched_edge.resize(max_domain_size, CTRL::kIndexOverflow);
+        var_matched_edge.resize(arity, CTRL::kIndexOverflow);
+        val_unmatched_edge.resize(max_domain_size, CTRL::BitSet64(num_bit));
+        var_unmatched_edge.resize(arity, CTRL::BitSet64(num_bit));
+        matching.resize(arity);
 
     }
 
@@ -387,7 +390,7 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
         /// solely for reify exps
         return forward_check_negation(stateObj, this);
 
-        vector < AbstractConstraint * > con;
+        vector<AbstractConstraint *> con;
         for (SysInt i = 0; i < (SysInt) var_array.size(); i++) {
             for (SysInt j = i + 1; j < (SysInt) var_array.size(); j++) {
                 EqualConstraint<VarRef, VarRef> *t = new EqualConstraint<VarRef, VarRef>(stateObj, var_array[i],
@@ -401,7 +404,7 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
     smallset to_process;  // set of vars to process.
 
 #if !defined(DYNAMICALLDIFF) || !defined(NO_DEBUG)
-    vector <smallset_list_bt> watches;
+    vector<smallset_list_bt> watches;
 #endif
 
     virtual void propagate(DomainInt prop_var_in, DomainDelta) {
@@ -704,7 +707,7 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 
         sccs_to_process.clear();
         {
-            vector <SysInt> &toiterate = to_process.getlist();
+            vector<SysInt> &toiterate = to_process.getlist();
             P("About to loop for to_process variables.");
 
             for (SysInt i = 0; i < (SysInt) toiterate.size(); ++i) {
@@ -836,7 +839,7 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 
         // Call Tarjan's for each disturbed SCC.
         {
-            vector <SysInt> &toiterate = sccs_to_process.getlist();
+            vector<SysInt> &toiterate = sccs_to_process.getlist();
             for (SysInt i = 0; i < (SysInt) toiterate.size(); i++) {
                 SysInt j = toiterate[i];
 
@@ -967,59 +970,135 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
             }
         }
 #endif
+
+        // reset all DS
+        for (int i = 0; i < arity; ++i) {
+            var_matched_edge[i] = CTRL::kIndexOverflow;
+            var_unmatched_edge[i].Reset();
+        }
+
+        for (int i = 0; i < max_domain_size; ++i) {
+            val_matched_edge[i] = CTRL::kIndexOverflow;
+            val_unmatched_edge[i].Reset();
+        }
+
+        not_gamma.MoveAllToFormer();
+        not_A.MoveAllToFormer();
+        not_free_nodes.MoveAllToFormer();
+
+
         // Call hopcroft for the whole matching.
         if (!matching_wrapper(0, numvars - 1))
             return;
-
 
         // 初始化数据结构
         for (int vv = 0; vv < numvars; ++vv) {
             const DomainInt max_value = var_array[vv].getMax();
             for (DomainInt aa = var_array[vv].getMin(); aa <= max_value; ++aa) {
+
+                // 从实际值取到映射值
                 auto aaa = value_map[aa];
                 const int idx = get_index(vv, aaa);
+//                std::cout << aa << "," << aaa << "," << idx << std::endl;
                 // 判断值(v,aa) 是否在论域里
                 if (var_array[vv].inDomain(aa)) {
-                    //(aa)没被记录
+                    // (aa)值有效
                     if (aa != varvalmatching[vv]) {
-                        // 非匹配边
-                        CC[aaa].Set(idx);
-                        DD[vv].Set(idx);
+//                        std::cout << "1" << std::endl;
+                        // vv-aaa为非匹配边
+                        val_unmatched_edge[aaa].Set(idx);
+                        var_unmatched_edge[vv].Set(idx);
                         unmatched_mask.Set(idx);
                     } else {
-                        AA[vv].Set(idx);
-                        BB[aaa].Set(idx);
-                        matched_mask.Set(idx);
-                    }
+//                        std::cout << "2" << std::endl;
 
+                        //vv-aaa为匹配边
+                        var_matched_edge[vv] = idx;
+                        val_matched_edge[aaa] = idx;
+                        matched_mask.Set(idx);
+                        matching[vv] = aaa;
+                    }
                 } else {
+//                    std::cout << "3" << std::endl;
                     invalid_edge.Set(idx);
                 }
-
             }
-
         }
 
+        // 生成 A集合和free node节点，
         for (int i = 0; i < max_domain_size; ++i) {
-            // 值的入匹配边为0，说明是自由点
-            if (BB[i].Empty()) {
+            // 值的入匹配边序号为-1，说明是自由点，并加入A集合
+            if (val_matched_edge[i] == CTRL::kIndexOverflow) {
                 not_free_nodes.MoveElementToLatter(i);
                 not_A.MoveElementToLatter(i);
             }
         }
 
-//        // step2
+        // step2 由自由点出发生成非配置边集合
         auto free_iter = not_free_nodes.LatterBegin();
         while (!free_iter.AfterLatterEnd()) {
-            allowed_edges |= CC[free_iter.Value()];
+            allowed_edges |= val_unmatched_edge[free_iter.Value()];
             ++free_iter;
         }
 
-        // step 3
-        //申请一些临时变量用来标记是否结束
-
+        // step 3 沿交替路径传播
+        // 申请临时变量用来标记是否结束
         bool extended = false;
+        do {
+            auto notG_iter = not_gamma.FormerEnd();
+            while (!notG_iter.BeforeFormerBegin()) {
+                auto i = notG_iter.Value();
+                if (CTRL::BitSet64::EmptyAnd(allowed_edges, var_unmatched_edge[i])) {
+                    extended = true;
+                    allowed_edges.Set(var_matched_edge[i]);
+                    notG_iter.MoveToLatterAndGoPrevious();
 
+                    // 把与匹配值相连的边并入
+                    int mv = matching[i];
+                    allowed_edges |= val_unmatched_edge[mv];
+                    not_A.MoveElementToLatter(mv);
+                } else {
+                    --notG_iter;
+                }
+            }
+        } while (extended);
+
+        // 扩展完成后预存一个状态
+        not_gamma.Mark();
+
+        // step 5 删掉Dc-A到gamma(varMatchedEdge)的边
+        // 方法：从Dc-A的非匹配出边集合，与gmma(varMatchedEdge)的非匹配入边的交集就是这种跨界边，原则小循环套大循环，一般而言Dc-A比较小
+        transboundary.Reset();
+        auto it = not_A.FormerEnd();
+        while (it.BeforeFormerBegin()) {
+            auto a = it.Value();
+            auto jt = not_gamma.LatterBegin();
+            while (jt.AfterLatterEnd()) {
+                CTRL::BitSet64::BitAnd(tmp, val_unmatched_edge[it.Value()], var_unmatched_edge[jt.Value()]);
+                ++jt;
+            }
+            transboundary |= tmp;
+            --it;
+        }
+
+
+        untransboundary.Reset(transboundary);
+        removed_edge.Set(transboundary);
+        CTRL::BitSet64::BitOr(need_check_edge, allowed_edges, transboundary, matched_mask, invalid_edge);
+        need_check_edge.Flip();
+
+        auto ii = need_check_edge.NextOneBit(0);
+        while (ii != CTRL::kIndexOverflow) {
+            search_edge.Reset();
+            search_edge.Set(ii);
+
+            auto v_a = get_value_ID(ii);
+            if (!find_SCC(v_a)) {
+                removed_edge.Set(ii);
+            }
+
+            ii = need_check_edge.NextOneBit(ii);
+        }
 
 #ifdef DYNAMICALLDIFF
         // sync the watches to the matching,
@@ -1058,17 +1137,51 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 
         // Call Tarjan's for all vars
 
-        var_indices.clear();
+//        var_indices.clear();
+//
+//        for (SysInt i = 0; i < numvars; i++)
+//            var_indices.push_back(i);
+//
+//
+//        if (numvars > 0)
+//            tarjan_recursive(0)
 
-        for (SysInt i = 0; i < numvars; i++)
-            var_indices.push_back(i);
+        for (int i = removed_edge.NextOneBit(0); i != CTRL::kIndexOverflow; removed_edge.NextOneBit(++i)) {
+            auto v_a = get_value_ID(i);
+            v_a.second = value_map[v_a.second];
+            var_array[v_a.first].removeFromDomain(v_a.second);
+        }
 
-
-        if (numvars > 0)
-            tarjan_recursive(0);
 
         return;
     }
+
+    // 0,1,2
+    bool find_SCC(std::pair<int, int> v_a) {
+        not_gamma.BackToMark();
+
+        bool extended = false;
+        do {
+            auto not_G_iter = not_gamma.FormerEnd();
+            while (not_G_iter.BeforeFormerBegin()) {
+                auto i = not_G_iter.Value();
+                if (CTRL::BitSet64::EmptyAnd(search_edge, var_unmatched_edge[i])) {
+                    extended = true;
+                    search_edge.Set(var_matched_edge[i]);
+                    if (search_edge.Check(val_matched_edge[v_a.second])) {
+                        return true;
+                    }
+
+                    not_G_iter.MoveToLatterAndGoPrevious();
+                    int mv = matching[i];
+                    search_edge |= val_unmatched_edge[mv];
+                    search_edge &= untransboundary;
+                }
+            }
+        } while (extended);
+        return false;
+    }
+
 //
 //    void do_prop_noscc() {
 //        PROP_INFO_ADDONE(AlldiffGacSlow);
@@ -1400,8 +1513,8 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
         return true;
     }
 
-    virtual vector <AnyVarRef> get_vars() {
-        vector <AnyVarRef> vars;
+    virtual vector<AnyVarRef> get_vars() {
+        vector<AnyVarRef> vars;
         vars.reserve(var_array.size());
         for (UnsignedSysInt i = 0; i < var_array.size(); ++i)
             vars.push_back(var_array[i]);
@@ -1409,9 +1522,9 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
     }
 
 
-    virtual bool get_satisfying_assignment(box<pair < SysInt, DomainInt>>
+    virtual bool get_satisfying_assignment(box<pair<SysInt, DomainInt>>
 
-    & assignment)    {
+                                           &assignment) {
         bool matchok = true;
         for (SysInt i = 0; i < numvars; i++) {
             if (!var_array[i].inDomain(varvalmatching[i])) {
@@ -1489,14 +1602,14 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
     end if
     */
 
-    vector <SysInt> tstack;
+    vector<SysInt> tstack;
     smallset_nolist in_tstack;
     smallset_nolist visited;
-    vector <SysInt> dfsnum;
-    vector <SysInt> lowlink;
+    vector<SysInt> dfsnum;
+    vector<SysInt> lowlink;
 
     //vector<SysInt> iterationstack;
-    vector <SysInt> curnodestack;
+    vector<SysInt> curnodestack;
 
     // Filled in before calling tarjan's.
     bool scc_split;
@@ -1505,9 +1618,9 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 
     SysInt max_dfs;
 
-    vector <SysInt> spare_values;
+    vector<SysInt> spare_values;
     bool include_sink;
-    vector <SysInt> var_indices;  // Should be a pointer so it can be changed.
+    vector<SysInt> var_indices;  // Should be a pointer so it can be changed.
 
     smallset sccs_to_process;   // Indices to the first var in the SCC to process.
 
@@ -2059,9 +2172,9 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
         return true;
     }
 
-    deque <SysInt> fifo;
-    vector <SysInt> prev;
-    vector <SysInt> matchbac;
+    deque<SysInt> fifo;
+    vector<SysInt> prev;
+    vector<SysInt> matchbac;
 // use push_back to push, front() and pop_front() to pop.
 
 //Also use invprevious to record which values are matched.
