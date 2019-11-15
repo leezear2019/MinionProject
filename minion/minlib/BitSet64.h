@@ -352,7 +352,8 @@ namespace CTRL {
 
         static inline bool EmptyAnd(const BitSet64 &a, const BitSet64 &b) noexcept {
             for (int i = 0; i < a.long_size_; ++i) {
-                if (a.words_[i] & b.words_[i] != 0L) {
+                auto t = a.words_[i] & b.words_[i];
+                if (t != 0L) {
                     return false;
                 }
             }

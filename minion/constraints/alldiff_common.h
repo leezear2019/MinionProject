@@ -169,6 +169,12 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
     CTRL::Biset not_gamma;
     CTRL::Biset not_free_nodes;
 
+    std::unordered_set<int> not_in_A;
+    std::unordered_set<int> in_A;
+    std::unordered_set<int> not_in_gamma;
+    std::unordered_set<int> in_gamma;
+    std::unordered_set<int> free_node;
+
     inline int get_index(const int a, const int b) {
         return a * max_domain_size + b;
     }
@@ -308,10 +314,13 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
         not_free_nodes.Resize(max_domain_size);
 
         val_matched_edge.resize(max_domain_size, CTRL::kIndexOverflow);
-        var_matched_edge.resize(arity, CTRL::kIndexOverflow);
         val_unmatched_edge.resize(max_domain_size, CTRL::BitSet64(num_bit));
+        var_matched_edge.resize(arity, CTRL::kIndexOverflow);
         var_unmatched_edge.resize(arity, CTRL::BitSet64(num_bit));
         matching.resize(arity);
+
+        cout << max_domain_size << "," << arity << endl;
+        cout << "-------------------" << endl;
 
     }
 
@@ -972,14 +981,21 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 #endif
 
         // reset all DS
+//        not_in_A.clear();
+//        in_A.clear();
+//        not_in_gamma.clear();
+//        in_gamma.clear();
+//        free_node.clear();
         for (int i = 0; i < arity; ++i) {
             var_matched_edge[i] = CTRL::kIndexOverflow;
             var_unmatched_edge[i].Reset();
+//            not_in_gamma.insert(i);
         }
 
         for (int i = 0; i < max_domain_size; ++i) {
             val_matched_edge[i] = CTRL::kIndexOverflow;
             val_unmatched_edge[i].Reset();
+//            not_in_A.insert(i);
         }
 
         not_gamma.MoveAllToFormer();
@@ -1024,6 +1040,26 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
                 }
             }
         }
+        cout << "-------------------" << endl;
+        for (auto &a:var_matched_edge) {
+            std::cout << a << " ";
+        }
+        cout << endl;
+        cout << "-------------------" << endl;
+
+        for (auto &a:val_matched_edge) {
+            std::cout << a << " ";
+        }
+        cout << endl;
+        cout << "-------------------" << endl;
+        for (auto &a:var_unmatched_edge) {
+            std::cout << a.ToString() << endl;
+        }
+        cout << "-------------------" << endl;
+        for (auto &a:val_unmatched_edge) {
+            std::cout << a.ToString() << endl;
+        }
+        cout << "-------------------" << endl;
 
         // 生成 A集合和free node节点，
         for (int i = 0; i < max_domain_size; ++i) {
@@ -1035,20 +1071,31 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
         }
 
         // step2 由自由点出发生成非配置边集合
+        cout << "---------输出freenode---------" << endl;
         auto free_iter = not_free_nodes.LatterBegin();
         while (!free_iter.AfterLatterEnd()) {
+            cout << free_iter.Value() << endl;
             allowed_edges |= val_unmatched_edge[free_iter.Value()];
             ++free_iter;
         }
+        cout << "allowed edge: " << allowed_edges.ToString() << endl;
 
         // step 3 沿交替路径传播
         // 申请临时变量用来标记是否结束
-        bool extended = false;
+        cout << "---------step3---------" << endl;
+        bool extended;
         do {
+            extended = false;
             auto notG_iter = not_gamma.FormerEnd();
             while (!notG_iter.BeforeFormerBegin()) {
                 auto i = notG_iter.Value();
-                if (CTRL::BitSet64::EmptyAnd(allowed_edges, var_unmatched_edge[i])) {
+                cout << "not gamma: " << i << endl;
+                if (!CTRL::BitSet64::EmptyAnd(allowed_edges, var_unmatched_edge[i])) {
+                    cout << "not gamma: " << i << " = true" << endl;
+                    cout << "allowed edge: " << allowed_edges.ToString() << endl;
+                    cout << "var_unmatched_edge: " << var_unmatched_edge[i].ToString() << endl;
+
+
                     extended = true;
                     allowed_edges.Set(var_matched_edge[i]);
                     notG_iter.MoveToLatterAndGoPrevious();
@@ -1065,7 +1112,7 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 
         // 扩展完成后预存一个状态
         not_gamma.Mark();
-
+        cout << "---------step5---------" << endl;
         // step 5 删掉Dc-A到gamma(varMatchedEdge)的边
         // 方法：从Dc-A的非匹配出边集合，与gmma(varMatchedEdge)的非匹配入边的交集就是这种跨界边，原则小循环套大循环，一般而言Dc-A比较小
         transboundary.Reset();
@@ -1081,23 +1128,26 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
             --it;
         }
 
-
+        // step 6 过滤需要检查强连通分量的边
+        cout << "---------step6---------" << endl;
         untransboundary.Reset(transboundary);
         removed_edge.Set(transboundary);
         CTRL::BitSet64::BitOr(need_check_edge, allowed_edges, transboundary, matched_mask, invalid_edge);
         need_check_edge.Flip();
 
+        cout << "---------step7---------" << endl;
         auto ii = need_check_edge.NextOneBit(0);
         while (ii != CTRL::kIndexOverflow) {
             search_edge.Reset();
             search_edge.Set(ii);
 
             auto v_a = get_value_ID(ii);
-            if (!find_SCC(v_a)) {
+            cout << "check: " << v_a << endl;
+            if (!find_SCC(ii, v_a)) {
                 removed_edge.Set(ii);
             }
 
-            ii = need_check_edge.NextOneBit(ii);
+            ii = need_check_edge.NextOneBit(ii + 1);
         }
 
 #ifdef DYNAMICALLDIFF
@@ -1145,27 +1195,35 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
 //
 //        if (numvars > 0)
 //            tarjan_recursive(0)
-
+        cout << "---------step8---------" << endl;
+        cout << removed_edge.ToString() << endl;
         for (int i = removed_edge.NextOneBit(0); i != CTRL::kIndexOverflow; removed_edge.NextOneBit(++i)) {
             auto v_a = get_value_ID(i);
             v_a.second = value_map[v_a.second];
             var_array[v_a.first].removeFromDomain(v_a.second);
         }
 
-
+        cout << "---------end---------" << endl;
         return;
     }
 
     // 0,1,2
-    bool find_SCC(std::pair<int, int> v_a) {
+    bool find_SCC(const int ii, const pair<int, int> v_a) {
         not_gamma.BackToMark();
+        search_edge.Reset();
+        search_edge.Set(ii);
 
         bool extended = false;
         do {
+            extended = false;
             auto not_G_iter = not_gamma.FormerEnd();
-            while (not_G_iter.BeforeFormerBegin()) {
+            while (!not_G_iter.BeforeFormerBegin()) {
                 auto i = not_G_iter.Value();
-                if (CTRL::BitSet64::EmptyAnd(search_edge, var_unmatched_edge[i])) {
+//                cout << "i: " << i << endl;
+//                cout << "search_edge: " << search_edge.ToString() << endl;
+//                cout << "var_unmatched_edge: " << var_unmatched_edge[i].ToString() << endl;
+                if (!CTRL::BitSet64::EmptyAnd(search_edge, var_unmatched_edge[i])) {
+//                    cout << "=============true" << i << endl;
                     extended = true;
                     search_edge.Set(var_matched_edge[i]);
                     if (search_edge.Check(val_matched_edge[v_a.second])) {
@@ -1176,6 +1234,8 @@ struct GacAlldiffConstraint : public FlowConstraint<VarArray, UseIncGraph> {
                     int mv = matching[i];
                     search_edge |= val_unmatched_edge[mv];
                     search_edge &= untransboundary;
+                } else {
+                    --not_G_iter;
                 }
             }
         } while (extended);
